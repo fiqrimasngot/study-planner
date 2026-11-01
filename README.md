@@ -2,6 +2,8 @@
 
 A shared study planner with browser-local study tasks and PostgreSQL-backed reminders.
 
+Fork isolation verification.
+
 ## Repository layout
 
 - `api/` — Python reminder API and PostgreSQL migration
