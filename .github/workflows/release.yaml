@@ -1,0 +1,99 @@
+---
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, publish, and deploy
+    runs-on: study-planner-runners
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.fiqriha.kim
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and publish API
+        id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile
+          push: true
+          tags: harbor.fiqriha.kim/library/study-planner-api:build-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and publish web
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          file: ./web/Dockerfile
+          push: true
+          tags: harbor.fiqriha.kim/library/study-planner-web:build-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Checkout kube repository
+        uses: actions/checkout@v4
+        with:
+          repository: fiqrimasngot/kube
+          token: ${{ secrets.KUBE_REPO_TOKEN }}
+          path: kube
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Update deployment references
+        env:
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+        run: |
+          python3 scripts/update_deployment.py \
+            --tag "build-${GITHUB_SHA}" \
+            --api-digest "${API_DIGEST}" \
+            --web-digest "${WEB_DIGEST}" \
+            --file kube/kubernetes/apps/default/study-planner/app/helmrelease.yaml \
+            --file kube/template/config/kubernetes/apps/default/study-planner/app/helmrelease.yaml.j2
+
+      - name: Validate rendered deployment
+        run: |
+          grep -F "tag: build-${GITHUB_SHA}@${{ steps.api.outputs.digest }}" kube/kubernetes/apps/default/study-planner/app/helmrelease.yaml
+          grep -F "tag: build-${GITHUB_SHA}@${{ steps.web.outputs.digest }}" kube/kubernetes/apps/default/study-planner/app/helmrelease.yaml
+
+      - name: Commit and push deployment
+        working-directory: kube
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add kubernetes/apps/default/study-planner/app/helmrelease.yaml template/config/kubernetes/apps/default/study-planner/app/helmrelease.yaml.j2
+          git diff --cached --check
+          git commit -m "deploy study planner ${GITHUB_SHA::12}"
+          git push origin HEAD:main
+
+      - name: Report immutable image references
+        run: |
+          echo "api=harbor.fiqriha.kim/library/study-planner-api:build-${GITHUB_SHA}@${{ steps.api.outputs.digest }}"
+          echo "web=harbor.fiqriha.kim/library/study-planner-web:build-${GITHUB_SHA}@${{ steps.web.outputs.digest }}"
