@@ -1,5 +1,6 @@
 ---
 name: Release
+# Publishes immutable images and updates the kube repository.
 
 on:
   push:
