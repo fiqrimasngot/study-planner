@@ -39,16 +39,15 @@ def update_helmrelease(text: str, tag: str, api_digest: str, web_digest: str) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--file", action="append", type=Path, required=True)
+    parser.add_argument("--file", type=Path, required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--api-digest", required=True)
     parser.add_argument("--web-digest", required=True)
     args = parser.parse_args()
-    for path in args.file:
-        original = path.read_text()
-        updated = update_helmrelease(original, args.tag, args.api_digest, args.web_digest)
-        path.write_text(updated)
-        print(path)
+    original = args.file.read_text()
+    updated = update_helmrelease(original, args.tag, args.api_digest, args.web_digest)
+    args.file.write_text(updated)
+    print(args.file)
 
 
 if __name__ == "__main__":

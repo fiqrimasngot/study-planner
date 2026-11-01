@@ -1,5 +1,10 @@
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+from scripts import update_deployment
 from scripts.update_deployment import update_helmrelease
 
 
@@ -14,6 +19,30 @@ class DeploymentUpdaterTests(unittest.TestCase):
     def test_rejects_missing_web_image(self) -> None:
         with self.assertRaisesRegex(ValueError, "web"):
             update_helmrelease("api:\n  image:\n    tag: old\n", "build-x", "sha256:a", "sha256:w")
+
+    def test_cli_updates_only_the_live_manifest(self) -> None:
+        source = """controllers:\n  api:\n    image:\n      repository: api\n      tag: old-api\n  web:\n    image:\n      repository: web\n      tag: old-web\n"""
+        with tempfile.TemporaryDirectory() as directory:
+            live = Path(directory) / "helmrelease.yaml"
+            template = Path(directory) / "helmrelease.yaml.j2"
+            live.write_text(source)
+            template.write_text(source)
+            argv = [
+                "update_deployment.py",
+                "--file",
+                str(live),
+                "--tag",
+                "build-test",
+                "--api-digest",
+                "sha256:api",
+                "--web-digest",
+                "sha256:web",
+            ]
+            with patch.object(sys, "argv", argv):
+                update_deployment.main()
+            self.assertIn("build-test@sha256:api", live.read_text())
+            self.assertIn("build-test@sha256:web", live.read_text())
+            self.assertEqual(source, template.read_text())
 
 
 if __name__ == "__main__":
