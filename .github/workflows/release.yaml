@@ -11,13 +11,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: study-planner-release
   cancel-in-progress: false
 
 jobs:
   release:
     name: Build, publish, and deploy
-    if: github.repository == 'fiqrimasngot/study-planner'
+    if: github.repository == 'fiqrimasngot/study-planner' && github.ref == 'refs/heads/main'
     runs-on: study-planner-runners
     steps:
       - name: Checkout application
@@ -35,6 +35,14 @@ jobs:
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
+      - name: Verify current main before API publication
+        run: &verify_current_main |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if [[ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" || "$(git rev-parse HEAD)" != "${GITHUB_SHA}" ]]; then
+            echo "Refusing to publish or deploy a stale main revision" >&2
+            exit 1
+          fi
+
       - name: Build and publish API
         id: api
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -46,6 +54,9 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Verify current main before web publication
+        run: *verify_current_main
 
       - name: Build and publish web
         id: web
@@ -84,6 +95,9 @@ jobs:
           grep -F "tag: build-${GITHUB_SHA}@${{ steps.api.outputs.digest }}" kube/kubernetes/apps/default/study-planner/app/helmrelease.yaml
           grep -F "tag: build-${GITHUB_SHA}@${{ steps.web.outputs.digest }}" kube/kubernetes/apps/default/study-planner/app/helmrelease.yaml
 
+      - name: Verify current main revision
+        run: *verify_current_main
+
       - name: Commit and push deployment
         working-directory: kube
         run: |
@@ -91,6 +105,10 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add kubernetes/apps/default/study-planner/app/helmrelease.yaml
           git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Deployment already references these images"
+            exit 0
+          fi
           git commit -m "deploy study planner ${GITHUB_SHA::12}"
           git push origin HEAD:main
 
