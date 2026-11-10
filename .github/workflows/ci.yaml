@@ -28,6 +28,8 @@ jobs:
           python-version: "3.15"
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Test website notifications
+        run: node --test tests/test_web_notifications.cjs
 
   docker-build:
     name: docker-build
